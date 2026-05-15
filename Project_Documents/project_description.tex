@@ -1,0 +1,162 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{xcolor}
+
+\title{\textbf{Project Proposal: ArXivQA -- A RAG-Based Conversational AI Agent Built on NVIDIA AI APIs}}
+\author{Kwok Chi Ho}
+\date{May 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document proposes a self-contained machine learning project to build a conversational question-answering system over arXiv scientific papers, using the NVIDIA AI software stack end-to-end. The system integrates NVIDIA NIM microservices for LLM inference (Llama 3.3 Nemotron Super), NeMo Retriever NIMs for embedding and reranking, ACE Agent for conversational orchestration, and NeMo Guardrails for safety and RAG grounding. A systematic comparative evaluation of retrieval configurations will be conducted using NeMo Evaluator. An optional speech interface via NVIDIA Riva extends the system into a full multimodal conversational AI pipeline. The project is designed to generate direct evidence of competency with the exact NVIDIA technologies listed in the Machine Learning Intern position (NeMo, NIM, ACE, Riva), while also demonstrating the experimental design and analytical depth sought by the Microsoft Research Sciences Internship.
+\end{abstract}
+
+\section{Introduction}
+The NVIDIA Machine Learning Intern role explicitly calls for experience with NeMo, NIM, ACE, and Riva to build AI agents, RAG systems, and speech AI workflows. The Microsoft Research Sciences Internship requires formulating research problems, running systematic experiments, and presenting insights on NLU, ML, and intelligent systems. This project, ArXivQA, addresses both simultaneously: it builds a complete conversational AI agent using the NVIDIA stack, while also producing a rigorous comparative study of RAG pipeline configurations—yielding a working prototype and a research-style report that strengthen the candidate's profile for both roles.
+
+\section{Project Objectives}
+\begin{enumerate}[noitemsep]
+    \item Ingest a corpus of arXiv papers (cs.CL, cs.AI, 500--1000 PDFs) and prepare structured data for retrieval.
+    \item Build a RAG pipeline using NVIDIA-hosted models: NeMo Retriever Text Embedding NIM for dense embeddings, NeMo Retriever Text Reranking NIM for precision, and NVIDIA NIM for LLMs (Llama 3.3 Nemotron Super) for generation.
+    \item Design a conversational AI agent with NVIDIA ACE Agent, leveraging its Plugin Server to integrate a LangGraph-based decision loop that determines when to retrieve documents.
+    \item Apply NeMo Guardrails for content safety, topic grounding, and RAG faithfulness enforcement.
+    \item Generate a synthetic evaluation set (100--200 QA pairs) and benchmark multiple RAG configurations using NeMo Evaluator's LLM-as-a-Judge.
+    \item Containerize the full system and deploy an interactive Streamlit demo.
+    \item (Optional) Add a speech interface with NVIDIA Riva ASR and TTS.
+    \item (Optional) Fine-tune the embedding model with NeMo Customizer using LoRA on domain-specific data.
+    \item Produce a research report (4--6 pages) summarizing methodology, experiments, and findings.
+\end{enumerate}
+
+\section{Technical Approach}
+
+\subsection{Data Preparation}
+Download 500--1000 PDFs from arXiv (2023--2025, cs.CL, cs.AI) using the arXiv API. Store metadata (title, abstract, authors). Extract text and structure with \texttt{pymupdf4llm}, segment into sections, and chunk with LangChain's \texttt{RecursiveCharacterTextSplitter} (512 tokens, 50 overlap). Generate a ground-truth QA dataset by prompting an LLM (via NVIDIA API Catalog, model \texttt{nvidia/llama-3.3-nemotron-super-49b-v1}) to create question-answer pairs grounded in specific document passages.
+
+\subsection{RAG Pipeline with NVIDIA NIM Microservices}
+All models are accessed through the NVIDIA API Catalog (\texttt{build.nvidia.com}) using the \texttt{langchain-nvidia-ai-endpoints} Python package, requiring zero local GPU infrastructure---a key advantage for rapid prototyping[reference:0].
+
+\begin{itemize}[noitemsep]
+    \item \textbf{LLM for Generation:} \texttt{ChatNVIDIA} class with model \texttt{nvidia/llama-3.3-nemotron-super-49b-v1}. This model serves as the core reasoning engine for query decomposition, context analysis, and answer synthesis[reference:1].
+    \item \textbf{Text Embedding:} \texttt{NVIDIAEmbeddings} with model \texttt{nvidia/nv-embedqa-e5-v5}, producing high-quality dense vector representations for semantic search[reference:2]. Embeddings are stored in a local FAISS or ChromaDB vector database.
+    \item \textbf{Text Reranking:} \texttt{NVIDIARerank} class with a NeMo Retriever Text Reranking NIM, which applies cross-attention between query and candidate passages to reorder retrieval results for maximum relevance[reference:3][reference:4].
+    \item \textbf{Multi-modal Ingestion (optional):} NeMo Retriever NIMs for extracting tables, charts, and graphic elements from PDFs, enabling richer context beyond plain text[reference:5].
+\end{itemize}
+
+\subsection{Conversational AI Agent with NVIDIA ACE}
+The agent is built using NVIDIA ACE Agent, a GPU-accelerated SDK designed specifically for LLM-driven conversational AI agents[reference:6]. The architecture consists of:
+
+\begin{enumerate}[noitemsep]
+    \item \textbf{Plugin Server:} ACE Agent's FastAPI-based Plugin Server allows integration of custom agent logic built with LangGraph or LangChain. This is where the decision node—determining whether to retrieve documents or answer from conversation history—is implemented[reference:7].
+    \item \textbf{Chat Engine:} Based on NVIDIA NeMo Guardrails, the Chat Engine manages conversation state, user context, and dialogue history. It uses Colang, an event-based dialog modeling language, to define flexible conversational flows[reference:8].
+    \item \textbf{Agentic Decision Loop:} The LangGraph agent (integrated via Plugin Server) evaluates each user query and decides: \textit{Retrieve} (call the RAG pipeline) or \textit{Answer directly} (use internal knowledge). The final response is generated by the LLM with source citations.
+\end{enumerate}
+
+\subsection{Content Safety and RAG Grounding with NeMo Guardrails}
+NeMo Guardrails is deployed as an orchestration layer that screens both user inputs and model outputs. It enforces:
+\begin{itemize}[noitemsep]
+    \item \textbf{RAG Grounding:} Verifies that generated answers are supported by retrieved context, mitigating hallucination[reference:9].
+    \item \textbf{Content Safety:} Uses the Llama 3.1 NemoGuard 8B Content Safety NIM to detect and block unsafe or off-topic content[reference:10].
+    \item \textbf{Topic Control:} Ensures the agent stays within the scientific QA domain, rejecting unrelated queries.
+\end{itemize}
+
+\subsection{Evaluation with NeMo Evaluator}
+Define the following metrics and evaluate using NeMo Evaluator's LLM-as-a-Judge capability[reference:11]:
+\begin{itemize}[noitemsep]
+    \item \textbf{Retrieval Quality:} Recall@5, Mean Reciprocal Rank (MRR).
+    \item \textbf{Answer Quality:} Faithfulness (RAGAS library, supplemented by NeMo Guardrails evaluation tools), BLEU/ROUGE against reference answers, and a manual win-rate sample.
+    \item \textbf{Efficiency:} Average latency (time-to-first-token, total response time).
+    \item \textbf{Safety Compliance:} Proportion of responses that pass NeMo Guardrails content safety checks.
+\end{itemize}
+
+Run a controlled experiment comparing four configurations:
+\begin{enumerate}[noitemsep,label=\alph*)]
+    \item BM25 sparse retrieval $\rightarrow$ LLM (baseline)
+    \item NeMo Retriever Embedding NIM (dense) $\rightarrow$ LLM
+    \item NeMo Retriever Embedding NIM + NeMo Retriever Reranking NIM $\rightarrow$ LLM
+    \item Agentic RAG with ACE Agent (decision node + best retrieval setup) + NeMo Guardrails
+\end{enumerate}
+
+Visualize results with matplotlib/seaborn plots and discuss accuracy-latency-safety trade-offs.
+
+\subsection{Deployment}
+\begin{itemize}[noitemsep]
+    \item Build an interactive Streamlit frontend for document upload and conversational QA.
+    \item Containerize the backend (FastAPI, ChromaDB/FAISS) with Docker Compose.
+    \item The entire system communicates with NVIDIA-hosted models via the API Catalog, requiring only an \texttt{NVIDIA\_API\_KEY} environment variable.
+    \item Publish all code on GitHub with a clear README, architecture diagram, and quickstart instructions.
+\end{itemize}
+
+\subsection{Optional Extensions}
+\begin{itemize}[noitemsep]
+    \item \textbf{Speech AI (Riva):} Add NVIDIA Riva ASR for speech-to-text input and Riva TTS for text-to-speech output, creating a full multimodal conversational pipeline[reference:12]. Riva exposes a simple API for speech recognition and synthesis, deployable via Docker[reference:13].
+    \item \textbf{Embedding Model Fine-tuning (NeMo Customizer):} Fine-tune the NeMo Retriever Embedding model using LoRA with NeMo Customizer on the arXiv domain corpus to improve retrieval recall[reference:14][reference:15].
+\end{itemize}
+
+\section{Timeline}
+The project is designed as a focused effort starting in May 2026, targeting completion of the core pipeline within 2--3 weeks of intensive work, followed by refinement.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|l|}
+\hline
+\textbf{Phase} & \textbf{Activities} \\
+\hline
+1 & Data collection, PDF extraction, chunking, QA set generation \\
+2 & Set up NVIDIA API access; build RAG pipeline (embedding, reranking, LLM) \\
+3 & Implement ACE Agent with Plugin Server + LangGraph decision loop \\
+4 & Integrate NeMo Guardrails; set up NeMo Evaluator harness \\
+5 & Run experiments across 4 configurations; collect metrics \\
+6 & Build Streamlit demo; Docker containerization; write research report \\
+7 & (Optional) Add Riva speech interface; fine-tune embeddings with NeMo Customizer \\
+\hline
+\end{tabular}
+\caption{Implementation phases}
+\label{tab:timeline}
+\end{table}
+
+\section{NVIDIA API Usage Summary}
+Table~\ref{tab:nvidia-apis} maps each project component to the specific NVIDIA technology used, demonstrating coverage of all four technologies listed in the internship job description.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Project Component} & \textbf{NVIDIA Technology} & \textbf{Access Method} \\
+\hline
+LLM Inference & NVIDIA NIM for LLMs & API Catalog / ChatNVIDIA \\
+Text Embedding & NeMo Retriever Text Embedding NIM & API Catalog / NVIDIAEmbeddings \\
+Text Reranking & NeMo Retriever Text Reranking NIM & API Catalog / NVIDIARerank \\
+Conversational Agent & NVIDIA ACE Agent & Docker / Plugin Server \\
+Content Safety & NeMo Guardrails & API Catalog / NIM \\
+Evaluation & NeMo Evaluator & API Catalog \\
+Speech ASR/TTS (opt.) & NVIDIA Riva & Docker container \\
+Fine-tuning (opt.) & NeMo Customizer & Docker / NGC \\
+\hline
+\end{tabular}
+\caption{Mapping of project components to NVIDIA technologies}
+\label{tab:nvidia-apis}
+\end{table}
+
+\section{Expected Deliverables}
+\begin{itemize}[noitemsep]
+    \item A fully functional, containerized RAG agent with Streamlit web demo, powered by NVIDIA-hosted models.
+    \item An evaluation dataset and automated benchmarking scripts using NeMo Evaluator.
+    \item A comparative research report (4--6 pages) with experimental results and analysis.
+    \item GitHub repository containing all code, configuration files, architecture diagram, and documentation.
+    \item A strengthened resume entry directly referencing NVIDIA NIM, NeMo, ACE, and Riva.
+\end{itemize}
+
+\section{Conclusion}
+ArXivQA is purpose-built to align with both target internships. For NVIDIA, it demonstrates hands-on experience with the exact technologies listed in the job description—NIM, NeMo, ACE, and Riva—applied to AI agents, RAG systems, and speech AI workflows. For Microsoft, it showcases systematic research thinking: formulating a comparative hypothesis, designing controlled experiments, evaluating with quantitative metrics, and presenting findings. The project is self-contained, achievable with free-tier NVIDIA API access, and produces concrete artifacts for both the resume and technical interviews.
+
+\end{document}
